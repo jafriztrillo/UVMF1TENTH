@@ -17,26 +17,52 @@ class SafetyNode(Node):
         super().__init__('safety_node')
         """
         One publisher should publish to the /drive topic with a AckermannDriveStamped drive message.
-
         You should also subscribe to the /scan topic to get the LaserScan messages and
         the /ego_racecar/odom topic to get the current speed of the vehicle.
-
         The subscribers should use the provided odom_callback and scan_callback as callback methods
-
         NOTE that the x component of the linear velocity in odom is the speed
         """
-        self.speed = 0.
-        # TODO: create ROS subscribers and publishers.
+
+        self.speed = 0.0
+        # Create ROS subscribers and publishers.
+        self.scan_subscription = self.create_subscription(
+            LaserScan,
+            'scan',
+            self.scan_callback,
+            10
+        )
+
+        self.odom_subscription = self.create_subscription(
+            Odometry,
+            'ego_racecar/odom',
+            self.odom_callback,
+            10
+        )
+        
+        # Update the speed of the car
+        self.publisher_ = self.create_publisher(AckermannDriveStamped, 'drive', 1000)
 
     def odom_callback(self, odom_msg):
-        # TODO: update current speed
-        self.speed = 0.
+        # Update current speed
+        self.speed = odom_msg.twist.twist.linear.x
 
     def scan_callback(self, scan_msg):
-        # TODO: calculate TTC
+        # Calculate TTC
+        emergency_breaking = False
+        for idx, r in enumerate(scan_msg.ranges):
+            if (np.isnan(r) or r > scan_msg.range_max or r < scan_msg.range_min): continue
+            threshold = 1 # To be tuned in real vehicle
+            if r / max(self.speed * np.cos(scan_msg.angle_min + idx * scan_msg.angle_increment), 0.001) < threshold: 
+                emergency_breaking = True
+                break
+
         
-        # TODO: publish command to brake
-        pass
+        # Publish command to brake
+        if emergency_breaking:
+            drive_msg = AckermannDriveStamped()
+            drive_msg.drive.speed = 0.0
+            self.get_logger().info("emergency brake engaged at speed {}".format(self.speed)) # Output to Log
+            self.publisher_.publish(drive_msg)
 
 def main(args=None):
     rclpy.init(args=args)
